@@ -488,6 +488,20 @@ async function tryAutoReconnect(){
   const c = walletChoices().find(x=>(x.info.rdns||x.info.name)===pref) || walletChoices()[0];
   if(c) try{ await connectWallet(c,true); }catch(_){}
 }
+/* 계정 바꾸기: MetaMask 계정 선택 창을 다시 띄워 이 사이트에 연결할 계정을 고르게 한다 */
+async function switchAccount(){
+  if (!W.provider) throw new Error('지갑을 먼저 연결하세요.');
+  const before = W.account;
+  try { await W.provider.request({ method:'wallet_requestPermissions', params:[{ eth_accounts:{} }] }); }
+  catch(e){ if (e?.code===4001) throw e; if (e?.code!==-32601 && e?.code!==4200) throw e; }
+  const accts = await W.provider.request({ method:'eth_accounts' });
+  W.account = (accts && accts[0] || '').toLowerCase() || null;
+  W.chainId = parseInt(await W.provider.request({ method:'eth_chainId' }),16);
+  await refreshBalance();
+  if (W.account && W.account!==before) audit('AUTH', short(W.account,6,4), '지갑 계정 변경', short(before||'',6,4)+' → '+short(W.account,6,4), '성공');
+  onWalletChange();
+  return W.account!==before;
+}
 function disconnectWallet(){
   const p=W.provider;
   W.provider=null; W.info=null; W.account=null; W.chainId=null; W.balance=null;
@@ -1291,8 +1305,9 @@ VIEWS.wallet = { title:'지갑·연결', crumb:'계약 (1) 메인넷',
         <div>계정</div><div class="mono">${W.account}${cp(W.account)}</div>
         <div>네트워크</div><div class="mono">${W.chainId} ${onChain?'<span class="chip ok">일치</span>':`<span class="chip warn">설정값 ${SET.chainId}과 다름</span>`}</div>
         <div>잔액</div><div class="mono">${onChain?fmtCoin(W.balance):'—'}</div></div>
+        <p class="small muted">MetaMask에서 쓰려는 계정과 다르면 “계정 바꾸기”를 눌러 MetaMask 창에서 그 계정에 체크하세요.</p>
         <div class="row">${onChain?'':`<button type="button" class="btn sm" id="w-switch">${esc(SET.chainName)}로 네트워크 전환</button>`}
-          <button type="button" class="btn ghost sm" id="w-add">네트워크 추가</button><button type="button" class="btn ghost sm" id="w-bal">잔액 새로고침</button><button type="button" class="btn ghost sm" id="w-out">연결 해제</button></div>`;
+          <button type="button" class="btn sm" id="w-acct">계정 바꾸기</button><button type="button" class="btn ghost sm" id="w-add">네트워크 추가</button><button type="button" class="btn ghost sm" id="w-bal">잔액 새로고침</button><button type="button" class="btn ghost sm" id="w-out">연결 해제</button></div>`;
     }
     h += `<div id="w-msg"></div>`;
     const wl=$('#wl-wallet'); if (wl && wl._h!==h){ wl.innerHTML=h; wl._h=h; this.bindWallet(); }
@@ -1326,6 +1341,7 @@ VIEWS.wallet = { title:'지갑·연결', crumb:'계약 (1) 메인넷',
     const on=(id,fn)=>{ const el=$(id); if(el) el.onclick=async()=>{ try{ await fn(); }catch(e){ msg(`<div class="err">${esc(decodeErr(e))}</div>`); } }; };
     on('#w-switch', async()=>{ await switchNetwork(); toast(`${SET.chainName} 네트워크로 전환했습니다`); });
     on('#w-add', async()=>{ await addNetwork(); toast('지갑에 네트워크 추가를 요청했습니다'); if(W.account){ W.chainId=parseInt(await W.provider.request({method:'eth_chainId'}),16); await refreshBalance(); onWalletChange(); } });
+    on('#w-acct', async()=>{ const changed=await switchAccount(); toast(changed?`계정을 ${short(W.account,4,4)}(으)로 바꿨습니다`:'같은 계정이 선택되었습니다. MetaMask 창에서 다른 계정에 체크하세요.'); });
     on('#w-bal', async()=>{ await refreshBalance(); this.live(); });
     on('#w-out', async()=>{ disconnectWallet(); toast('지갑 연결을 해제했습니다'); });
   },
