@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: vyd
+    folder: VYD
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,32 @@
+# /etc/systemd/system/vyd-geth.service
+# VYD 노드(Geth)를 서버 부팅 시 자동 시작하고, 죽으면 5초 뒤 다시 띄운다.
+# 【 】 부분은 현재 노드 실행 명령에 맞춰 바꾸세요. (지금 쓰는 명령: ps -ef | grep geth 로 확인)
+#
+#   sudo cp vyd-geth.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vyd-geth
+#   journalctl -u vyd-geth -f        # 로그 보기
+[Unit]
+Description=VYD mainnet node (Geth, Chain ID 7603)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=【geth 실행 계정】
+ExecStart=/usr/local/bin/geth \
+  --datadir 【/data/vyd】 \
+  --networkid 7603 \
+  --syncmode full \
+  --http --http.addr 127.0.0.1 --http.port 8545 \
+  --http.api eth,net,web3,clique,txpool \
+  --http.corsdomain "https://rich-hyun.github.io,http://localhost:5173" \
+  --http.vhosts "*" \
+  --metrics --metrics.addr 0.0.0.0 --metrics.port 6060 \
+  【서명자 계정 잠금 해제·mine 관련 기존 옵션 그대로】
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

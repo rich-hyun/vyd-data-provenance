@@ -1,0 +1,92 @@
+groups:
+  - name: vyd-chain
+    rules:
+      - alert: VydRpcDown
+        expr: vyd_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: VYD RPC 응답 없음
+          description: "{{ $labels.instance }} 에서 1분 넘게 RPC 응답이 없습니다."
+
+      - alert: VydExporterDown
+        expr: up{job="vyd-chain"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 체인 익스포터 중단
+          description: vyd-exporter 컨테이너가 응답하지 않습니다.
+
+      - alert: VydBlockProductionStalled
+        expr: time() - vyd_last_block_change_timestamp_seconds > 30
+        for: 30s
+        labels: { severity: critical }
+        annotations:
+          summary: 블록 생성 정지
+          description: "최신 블록 #{{ with query \"vyd_block_height\" }}{{ . | first | value }}{{ end }} 이후 30초 넘게 새 블록이 없습니다 (블록 주기 2초)."
+
+      - alert: VydChainIdMismatch
+        expr: vyd_chain_id != vyd_expected_chain_id
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 체인 ID 불일치
+          description: "RPC가 체인 ID {{ $value }} 를 응답했습니다. 다른 네트워크에 연결됐는지 확인하세요."
+
+      - alert: VydNodeClockSkew
+        expr: abs(vyd_clock_skew_seconds) > 15
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: 노드 시계 오차
+          description: "블록 타임스탬프가 실제 시각과 {{ $value | humanize }}초 차이 납니다. 노드 서버에서 timedatectl set-ntp true 로 시간 동기화를 켜세요."
+
+      - alert: VydRpcSlow
+        expr: vyd_rpc_latency_seconds > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: RPC 응답 지연
+          description: "RPC 응답 시간이 {{ $value | humanizeDuration }} 입니다."
+
+      - alert: VydNoPeers
+        expr: vyd_peer_count == 0
+        for: 10m
+        labels: { severity: info }
+        annotations:
+          summary: 피어 없음 (단일 노드)
+          description: 노드가 다른 노드와 연결되어 있지 않습니다. 노드를 추가하면 가용성이 올라갑니다.
+
+  - name: vyd-host
+    rules:
+      - alert: HostDown
+        expr: up{job="node"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 서버 메트릭 수집 중단
+          description: node-exporter가 응답하지 않습니다.
+
+      - alert: HostDiskAlmostFull
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 > 85
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: 디스크 사용률 85% 초과
+          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanize }}%"
+
+      - alert: HostMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: 메모리 사용률 90% 초과
+          description: "메모리 사용률 {{ $value | humanize }}%"
+
+      - alert: HostCpuHigh
+        expr: 100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: CPU 사용률 90% 초과
+          description: "CPU 사용률 {{ $value | humanize }}%"

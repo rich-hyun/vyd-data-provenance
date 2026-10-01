@@ -1,0 +1,35 @@
+# 경보 전달 설정. 아래 receivers 의 주석을 풀고 실제 값을 넣으세요.
+route:
+  receiver: ops
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [ 'severity="info"' ]
+      receiver: silent
+    - matchers: [ 'severity="critical"' ]
+      receiver: ops
+      repeat_interval: 30m
+
+inhibit_rules:
+  # RPC가 죽으면 블록 정지 경보는 중복이므로 묶어서 보냄
+  - source_matchers: [ 'alertname="VydRpcDown"' ]
+    target_matchers: [ 'alertname="VydBlockProductionStalled"' ]
+
+receivers:
+  - name: silent
+  - name: ops
+    # 메일
+    # email_configs:
+    #   - to: ops@example.com
+    #     from: alert@example.com
+    #     smarthost: smtp.example.com:587
+    #     auth_username: alert@example.com
+    #     auth_password: <SMTP 비밀번호>
+    # 메신저 웹훅 (Slack 호환)
+    # slack_configs:
+    #   - api_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+    #     channel: '#vyd-alerts'
+    #     title: '{{ .CommonAnnotations.summary }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'

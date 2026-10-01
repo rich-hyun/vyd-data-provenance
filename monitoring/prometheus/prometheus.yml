@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    network: vyd
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  # 체인 상태 (RPC 실측): 블록 생성, 지연, 피어, 컨트랙트 이력 수
+  - job_name: vyd-chain
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['vyd-exporter:9101']
+
+  # 서버 리소스: CPU, 메모리, 디스크
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels: { host: vyd-node-1 }
+
+  # Geth 내부 메트릭 (Geth 실행 옵션 --metrics --metrics.addr 0.0.0.0 --metrics.port 6060 필요)
+  # 관제 스택을 다른 서버에 둔다면 host.docker.internal 을 노드 서버 주소로 바꾸세요.
+  - job_name: geth
+    metrics_path: /debug/metrics/prometheus
+    static_configs:
+      - targets: ['host.docker.internal:6060']
+        labels: { host: vyd-node-1 }

@@ -1,0 +1,71 @@
+# VYD 노드·관제 스택: Prometheus + Alertmanager + Grafana + 체인 익스포터 + 서버 리소스 익스포터
+#   cp .env.example .env   (값 수정)
+#   docker compose up -d
+# Grafana: http://<서버>:3000  (초기 계정 admin / .env의 GRAFANA_ADMIN_PASSWORD)
+services:
+  vyd-exporter:
+    image: node:22-alpine
+    container_name: vyd-exporter
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "vyd-exporter.mjs"]
+    volumes:
+      - ./exporter:/app:ro
+    environment:
+      RPC_URL: ${RPC_URL:-https://vyd.mustree.kr}
+      EXPECTED_CHAIN_ID: ${EXPECTED_CHAIN_ID:-7603}
+      CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
+    expose: ["9101"]
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    expose: ["9100"]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 같은 서버의 Geth 메트릭(6060) 수집용
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./alertmanager:/etc/alertmanager:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+volumes:
+  prometheus-data:
+  grafana-data:

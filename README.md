@@ -52,6 +52,8 @@ flowchart LR
 ├─ console/
 │  ├─ src.html                            콘솔 소스
 │  └─ index.html                          빌드 결과. 이 파일 하나만 올리면 됩니다
+├─ monitoring/                           노드·관제 스택 (Prometheus·Alertmanager·Grafana·익스포터)
+├─ ops/                                  Geth systemd 서비스, 시간 동기화, CORS
 └─ .github/workflows/                     CI, Pages, 컨트랙트·API 배포
 ```
 
@@ -213,6 +215,10 @@ VYD 노드는 Geth입니다. 브라우저 콘솔이 RPC를 직접 호출하려�
 
 - `vyd.mustree.kr` 앞에 nginx 같은 프록시가 있다면 거기서 `Access-Control-Allow-Origin` 헤더를 붙여도 됩니다.
 - CORS를 열 수 없으면 콘솔은 연결된 지갑(VYD 네트워크 선택 상태)을 거쳐 조회합니다.
+
+## 노드·관제
+
+`monitoring/`에서 `docker compose up -d`로 관제 스택을 띄웁니다. 블록 생성 정지, RPC 장애, 노드 시계 오차, 서버 리소스를 감시하고 Grafana 대시보드와 Alertmanager 경보로 전달합니다. 자세한 내용은 `monitoring/README.md`, 노드 상시 실행·시간 동기화는 `ops/README.md`를 보세요.
 
 ## 산출물 대응표
 
