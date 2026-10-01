@@ -1,0 +1,10 @@
+{
+  "name": "vyd-provenance-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "VYD 데이터 이력·진위검증 REST API",
+  "scripts": { "start": "node --env-file=.env server.mjs" },
+  "engines": { "node": ">=20.6" },
+  "dependencies": { "ethers": "6.13.4", "express": "^4.21.0" }
+}

@@ -1,0 +1,68 @@
+# API 서버를 운영 서버로 배포 (SSH + rsync + pm2)
+# Actions는 서버를 계속 띄워 둘 수 없으므로, 코드를 운영 서버에 올리고 재시작만 합니다.
+# 운영 서버 준비 (최초 1회): Node.js 22, pm2(npm i -g pm2), DEPLOY_PATH/api-server/.env 작성
+# 필요한 값
+#   Secrets  : SSH_PRIVATE_KEY (배포용 키), SSH_KNOWN_HOSTS (ssh-keyscan 결과)
+#   Variables: SSH_HOST, SSH_USER, SSH_PORT(기본 22), DEPLOY_PATH (예: /opt/vyd)
+name: Deploy API server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api-server/**'
+      - 'contracts/**'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 서버 정보(SSH_HOST 변수)를 넣기 전에는 건너뜀
+    if: vars.SSH_HOST != ''
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      TARGET: ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: ABI 생성
+        run: npm run compile
+      - name: SSH 준비
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: 파일 전송 (.env와 data/는 서버 것을 유지)
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$TARGET" "mkdir -p '$DEPLOY_PATH'"
+          rsync -az --delete \
+            --exclude node_modules --exclude data --exclude .env \
+            -e "ssh -i $HOME/.ssh/id_deploy -p $SSH_PORT" \
+            api-server artifacts "$TARGET:$DEPLOY_PATH/"
+      - name: 설치·재시작
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$TARGET" bash -se <<EOS
+          set -e
+          cd '$DEPLOY_PATH/api-server'
+          test -f .env || { echo ".env 가 없습니다. 서버에 $DEPLOY_PATH/api-server/.env 를 먼저 만드세요."; exit 1; }
+          npm ci --omit=dev
+          if pm2 describe vyd-api >/dev/null 2>&1; then pm2 reload vyd-api --update-env; else pm2 start server.mjs --name vyd-api --node-args="--env-file=.env"; fi
+          pm2 save
+          EOS
+      - name: 헬스 체크
+        if: vars.API_HEALTH_URL != ''
+        run: |
+          for i in 1 2 3 4 5; do curl -fsS "${{ vars.API_HEALTH_URL }}" && exit 0; sleep 3; done
+          echo "헬스 체크 실패"; exit 1

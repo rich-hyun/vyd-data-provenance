@@ -1,0 +1,62 @@
+# 콘솔(console/index.html)을 GitHub Pages로 배포
+# 저장소 Settings → Pages → Source 를 "GitHub Actions"로 바꿔야 동작합니다.
+# 저장소 변수(Settings → Secrets and variables → Actions → Variables)로 기본 설정을 넣을 수 있습니다:
+#   CONSOLE_CONTRACT, CONSOLE_DEPLOY_BLOCK, CONSOLE_API, CONSOLE_RPC, CONSOLE_CHAIN_ID
+name: Deploy console
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'console/src.html'
+      - 'contracts/**'
+      - 'scripts/build-console.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - name: 콘솔 빌드
+        run: node scripts/build-console.mjs
+        env:
+          CONSOLE_RPC: ${{ vars.CONSOLE_RPC }}
+          CONSOLE_CHAIN_ID: ${{ vars.CONSOLE_CHAIN_ID }}
+          CONSOLE_CONTRACT: ${{ vars.CONSOLE_CONTRACT }}
+          CONSOLE_DEPLOY_BLOCK: ${{ vars.CONSOLE_DEPLOY_BLOCK }}
+          CONSOLE_API: ${{ vars.CONSOLE_API }}
+      - name: 배포 파일 준비
+        run: |
+          mkdir -p _site
+          cp console/index.html _site/index.html
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

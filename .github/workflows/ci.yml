@@ -1,0 +1,32 @@
+# 푸시·PR마다 컨트랙트 컴파일·테스트, 콘솔 빌드, API 서버 문법 검사
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            api-server/package-lock.json
+      - run: npm ci
+      - name: 컨트랙트 컴파일
+        run: npm run compile
+      - name: 컨트랙트 테스트 (로컬 체인)
+        run: npm test
+      - name: 콘솔 빌드
+        run: node scripts/build-console.mjs
+      - name: API 서버 의존성·문법 확인
+        working-directory: api-server
+        run: |
+          npm ci
+          node --check server.mjs

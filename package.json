@@ -1,0 +1,24 @@
+{
+  "name": "vyd-data-provenance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VYD 전용 메인넷(Chain ID 7603)에서 데이터 가공 이력을 기록하고 SHA-256 해시로 진위를 검증하는 스마트컨트랙트·API·관리 콘솔",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "compile": "node scripts/compile.mjs",
+    "test": "node test/contract.test.mjs",
+    "build": "node scripts/compile.mjs && node scripts/build-console.mjs",
+    "check": "node scripts/check-network.mjs",
+    "console": "node scripts/build-console.mjs && node scripts/serve-console.mjs",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "dependencies": {
+    "ethers": "6.13.4",
+    "solc": "0.8.24",
+    "@openzeppelin/contracts": "5.0.2"
+  },
+  "devDependencies": {
+    "ganache": "7.9.2"
+  }
+}

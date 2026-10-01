@@ -1,0 +1,63 @@
+# 컨트랙트 배포 — 수동 실행 전용 (실행할 때마다 새 컨트랙트가 생기므로 push로 자동 실행하지 않음)
+# 필요한 값
+#   Secrets  : DEPLOYER_PRIVATE_KEY  (배포 계정 개인키)
+#   Variables: RPC_URL (기본 https://vyd.mustree.kr), GAS_PRICE (무료 가스 네트워크면 0, 아니면 비움)
+name: Deploy contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '새 컨트랙트를 배포합니다. 계속하려면 deploy 라고 입력'
+        required: true
+      admin:
+        description: '관리자 주소 (비우면 배포 계정)'
+        required: false
+      registrars:
+        description: 'REGISTRAR_ROLE 부여 주소, 쉼표 구분 (예: API 서버 계정)'
+        required: false
+      auditors:
+        description: 'AUDITOR_ROLE 부여 주소, 쉼표 구분'
+        required: false
+
+jobs:
+  deploy:
+    if: inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - name: 배포 전 테스트
+        run: npm test
+      - name: 배포
+        run: npm run deploy
+        env:
+          RPC_URL: ${{ vars.RPC_URL }}
+          GAS_PRICE: ${{ vars.GAS_PRICE }}
+          PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          ADMIN: ${{ inputs.admin }}
+          REGISTRARS: ${{ inputs.registrars }}
+          AUDITORS: ${{ inputs.auditors }}
+      - name: 배포 결과 요약
+        run: |
+          f=$(ls deployments/*.json)
+          node -e '
+            const d=require(process.argv[1]);
+            console.log(`### DataProvenanceRegistry 배포 완료\n`);
+            console.log(`| 항목 | 값 |\n|---|---|`);
+            console.log(`| 주소 | \`${d.address}\` |`);
+            console.log(`| 배포 블록 | ${d.blockNumber} |`);
+            console.log(`| 트랜잭션 | \`${d.deployTx}\` |`);
+            console.log(`| 관리자 | \`${d.admin}\` |`);
+            console.log(`\n다음 단계: 저장소 변수 CONSOLE_CONTRACT=${d.address}, CONSOLE_DEPLOY_BLOCK=${d.blockNumber} 을 넣고 "Deploy console"을 다시 실행하세요.`);
+          ' "$PWD/$f" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment
+          path: deployments/
