@@ -341,6 +341,7 @@ const CONFIG = {
   company: '빈야드 매니지먼트',
   inspectionDue: new Date(2026, 10, 30), // 11월 말 완료 → 검수
 };
+const CONSOLE_BUILD = "2026-10-01 15:40 KST";
 const SETTINGS_KEY = 'vyd-console-settings';
 function loadSettings(){ try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch(_) { return {}; } }
 let SET = { ...DEFAULTS, ...loadSettings() };
@@ -617,7 +618,7 @@ function resetLive(){
   if (isLive()) useStore('live');
 }
 async function enterLive(){
-  useStore('live'); S.height = LIVE.height; S.exSel=null; S.lastReceipt=null;
+  useStore('live'); S.height = LIVE.height; S.exSel=null; S.lastReceipt=null; LIVE.lastChangeAt = Date.now();
   await Promise.all([ fetchRange(Math.max(0,LIVE.height-29), LIVE.height), netInfo(), syncLogs() ]);
 }
 function enterSim(){ useStore('sim'); S.height = curHeight(); S.exSel=null; S.lastReceipt=null; }
@@ -738,7 +739,8 @@ function ingestLog(l){
 }
 async function netInfo(){
   LIVE.netAt=Date.now();
-  const tryR=(m,p=[])=>rpc(m,p).catch(()=>null);
+  LIVE.noMethod = LIVE.noMethod || new Set();   // 노드가 지원하지 않는 메서드는 다시 부르지 않음 (노드 로그 경고 방지)
+  const tryR=(m,p=[])=>LIVE.noMethod.has(m) ? Promise.resolve(null) : rpc(m,p).catch(e=>{ if(e?.rpcCode===-32601 || /does not exist|not available|not allowed/i.test(e?.message||'')) LIVE.noMethod.add(m); return null; });
   const [peers, client, syncing, gp] = await Promise.all([ tryR('net_peerCount'), tryR('web3_clientVersion'), tryR('eth_syncing'), tryR('eth_gasPrice') ]);
   LIVE.peers = peers==null ? null : parseInt(peers,16); LIVE.client=client; LIVE.syncing = syncing || false; LIVE.gasPrice = gp==null ? null : BigInt(gp);
   if (!LIVE.genesis){ const g=await tryR('eth_getBlockByNumber',['0x0',false]); if(g) LIVE.genesis={ hash:g.hash, time:parseInt(g.timestamp,16)*1000, extra:g.extraData, gasLimit:parseInt(g.gasLimit,16) }; }
@@ -750,13 +752,21 @@ async function netInfo(){
     if (LIVE.codeOk){ try { const [t,d,a]=await Promise.all([ethCall('totalRecords',[]),ethCall('datasetCount',[]),ethCall('auditAnchorCount',[])]); LIVE.stats={ total:Number(t[0]), datasets:Number(d[0]), anchors:Number(a[0]) }; } catch(_){ LIVE.stats=null; } }
   } else { LIVE.codeOk=null; LIVE.stats=null; }
 }
+/* 블록 정지 판단은 브라우저 시계 기준: 블록 번호가 마지막으로 바뀐 뒤 흐른 시간.
+   노드 서버 시계가 틀려도(블록 타임스탬프가 늦어도) 잘못된 경보가 나지 않는다. */
+function freshness(avg){
+  const age = LIVE.lastChangeAt ? (Date.now()-LIVE.lastChangeAt)/1000 : null;
+  const stall = age!=null && age > Math.max(15, (avg||2)*5);
+  const skew = LIVE.skew==null ? null : Math.round(LIVE.skew);
+  return { age, stall, skew, skewBad: skew!=null && Math.abs(skew) > 15 };
+}
 let polling=false;
 async function livePoll(){
   polling=true; LIVE.lastPoll=Date.now();
   try {
     const t0=performance.now(); const h=parseInt(await rpc('eth_blockNumber'),16); LIVE.latency=Math.round(performance.now()-t0);
     LIVE.ok=true; LIVE.err=null;
-    if (h!==LIVE.height){ LIVE.height=h; S.height=h; await fetchRange(Math.max(0,h-29), h); await syncLogs(); }
+    if (h!==LIVE.height){ LIVE.height=h; S.height=h; LIVE.lastChangeAt=Date.now(); await fetchRange(Math.max(0,h-29), h); const lb=LB.get(h); if(lb) LIVE.skew=(LIVE.lastChangeAt-lb.time)/1000; await syncLogs(); }
     if (Date.now()-LIVE.netAt>10000) await netInfo();
   } catch(e){ LIVE.ok=false; LIVE.err=friendlyRpcErr(e); }
   polling=false; live();
@@ -1192,8 +1202,8 @@ VIEWS.dashboard = { title:'대시보드', crumb:'계약 (1) 메인넷',
     const lastBlocks=blocks.slice(-7).reverse();
     let nodeKpi;
     if (isLive()){
-      const lb=LB.get(S.height); const age=lb?(Date.now()-lb.time)/1000:null; const stall = age!=null && avgBT && age > Math.max(15, avgBT*5);
-      nodeKpi = kpi('피어 · 블록 경과', `${LIVE.peers??'—'} · ${age==null?'—':Math.round(age)+'s'}`, stall?'블록 생성 정지 의심':`RPC ${LIVE.latency??'—'}ms · ${LIVE.transport==='wallet'?'지갑 경유':'직접 연결'}`, stall?'crit':'');
+      const f=freshness(avgBT);
+      nodeKpi = kpi('블록 생성', f.stall?'정지 의심':'정상', f.stall?`${Math.round(f.age)}초째 새 블록 없음`:(f.skewBad?`PC·노드 시계 ${f.skew}초 차이 · RPC ${LIVE.latency??'—'}ms`:`RPC ${LIVE.latency??'—'}ms · 피어 ${LIVE.peers??'—'}`), f.stall?'crit':(f.skewBad?'warn':''));
     } else {
       const alive=S.nodes.filter(n=>!n.down).length, vAlive=VALS().filter(n=>!n.down).length, open=S.alerts.filter(a=>!a.resolved).length;
       nodeKpi = kpi('노드', `${alive}/${S.nodes.length}`, open?`경보 ${open}건 · Validator ${vAlive}/4`:'전 노드 정상 · Validator 4/4', open?'crit':'');
@@ -1503,29 +1513,30 @@ VIEWS.nodes = { title:'노드·관제', crumb:'계약 (1) 메인넷',
     const blocks=[]; for(let i=0;i<100;i++){ const b=LB.get(S.height-i); if(b) blocks.push(b); }
     const bts=[]; blocks.forEach(b=>{ const p=LB.get(b.number-1); if(p) bts.push((b.time-p.time)/1000); });
     const avg = bts.length ? bts.reduce((a,b)=>a+b,0)/bts.length : null;
-    const lb=LB.get(S.height); const age = lb ? (Date.now()-lb.time)/1000 : null;
-    const stall = age!=null && age > Math.max(15,(avg||2)*5);
+    const f=freshness(avg), age=f.age, stall=f.stall;
     const vals = LIVE.validators || [...new Set(blocks.map(b=>b.miner))];
     const rows = vals.map(v=>{ const mine=blocks.filter(b=>b.miner===v); return { v, n:mine.length, last:mine[0]?.number ?? null, lastT:mine[0]?.time ?? null }; });
     const expectMiss = blocks.length >= vals.length*3;
     const alerts=[];
     if (!LIVE.ok) alerts.push({ crit:true, t:'RPC 응답 없음', d:LIVE.err });
-    if (stall) alerts.push({ crit:true, t:'블록 생성 정지 의심', d:`마지막 블록 #${fmt(S.height)} 이후 ${Math.round(age)}초 경과` });
-    if (LIVE.peers===0) alerts.push({ crit:true, t:'피어 0', d:'RPC 노드가 다른 노드와 연결되지 않았습니다.' });
+    if (stall) alerts.push({ crit:true, t:'블록 생성 정지 의심', d:`블록 #${fmt(S.height)} 이후 ${Math.round(age)}초 동안 새 블록이 없습니다.` });
+    if (f.skewBad) alerts.push({ crit:false, t:`PC·노드 시계 차이 ${Math.abs(f.skew)}초`, d:`이 PC 시계와 블록 시각이 ${Math.abs(f.skew)}초 차이 납니다. 블록 생성은 정상입니다. PC(Windows: 설정 → 날짜 및 시간 → 지금 동기화)와 노드 서버(timedatectl)의 시간 동기화를 확인하세요.` });
+    if (LIVE.peers===0) alerts.push({ crit:false, info:true, t:'피어 0 (단일 노드)', d:'노드가 한 대뿐이라 그 노드가 멈추면 체인도 멈춥니다. 노드를 추가하면 해소됩니다.' });
     if (LIVE.syncing) alerts.push({ crit:false, t:'동기화 중', d:'RPC 노드가 최신 블록을 따라잡는 중입니다.' });
     if (LIVE.validators && expectMiss) rows.filter(r=>r.n===0).forEach(r=>alerts.push({ crit:false, t:'검증자 제안 없음', d:`${short(r.v,6,4)} · 최근 ${blocks.length}블록 동안 블록 제안 0건` }));
     if (LIVE.logsErr) alerts.push({ crit:false, t:'이벤트 조회 실패', d:LIVE.logsErr });
     setHTML($('#nd-summary'),
-      kpi('블록 생성', stall?'정지 의심':'정상', `#${fmt(S.height)} · ${age==null?'—':Math.round(age)+'초 전'}`, stall?'crit':'') +
+      kpi('블록 생성', stall?'정지 의심':'정상', `#${fmt(S.height)} · ${age==null?'—':Math.round(age)+'초 전 갱신'}`, stall?'crit':'') +
+      kpi('PC·노드 시계 차이', f.skew==null?'—':f.skew+'s', f.skewBad?'시간 동기화 확인 필요':'정상 범위 (±15초)', f.skewBad?'warn':'') +
       kpi('평균 블록 시간', avg==null?'—':avg.toFixed(2)+'s', `최근 ${bts.length}개 간격`) +
-      kpi('피어', LIVE.peers??'—', LIVE.syncing?'동기화 중':'동기화 완료', LIVE.peers===0?'crit':'') +
+      kpi('피어', LIVE.peers??'—', LIVE.peers===0?'단일 노드':(LIVE.syncing?'동기화 중':'동기화 완료')) +
       kpi('RPC 응답', LIVE.latency!=null?LIVE.latency+'ms':'—', LIVE.transport==='wallet'?'지갑 경유':'직접 호출', !LIVE.ok?'crit':'') +
       kpi('가스 가격', LIVE.gasPrice==null?'—':(LIVE.gasPrice===0n?'0':ethers.formatUnits(LIVE.gasPrice,'gwei')+' gwei'), esc((LIVE.client||'').split('/').slice(0,2).join('/')||'클라이언트 —')));
     setHTML($('#nd-vsrc'), `${esc(LIVE.validatorSrc||'')} · 최근 ${blocks.length}블록 기준`);
     setHTML($('#nd-vals'), rows.length ? `<table><thead><tr><th>검증자</th><th class="num">제안 블록</th><th>마지막 제안</th><th>상태</th></tr></thead><tbody>
       ${rows.map((r,i)=>`<tr><td>${addrLink(r.v)}</td><td class="num mono">${r.n}</td><td>${r.last!=null?blkLink(r.last)+' <span class="small muted">'+ago(r.lastT)+'</span>':'—'}</td>
         <td>${r.n>0?'<span class="chip ok">정상</span>':expectMiss?'<span class="chip warn">제안 없음</span>':'<span class="chip">집계 중</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">블록을 불러오는 중입니다.</div>');
-    setHTML($('#nd-alerts'), alerts.length ? alerts.map(a=>`<div class="li" style="cursor:default"><div class="t"><span>${esc(a.t)}</span><span class="chip ${a.crit?'crit':'warn'}">${a.crit?'위험':'주의'}</span></div><div class="small">${esc(a.d||'')}</div></div>`).join('') : '<div class="okmsg">현재 경보가 없습니다.</div>');
+    setHTML($('#nd-alerts'), alerts.length ? alerts.map(a=>`<div class="li" style="cursor:default"><div class="t"><span>${esc(a.t)}</span><span class="chip ${a.crit?'crit':a.info?'':'warn'}">${a.crit?'위험':a.info?'안내':'주의'}</span></div><div class="small">${esc(a.d||'')}</div></div>`).join('') : '<div class="okmsg">현재 경보가 없습니다.</div>');
   },
   liveSim(){
     if (!$('#nd-table')) return render();
@@ -2508,7 +2519,7 @@ function updateHeader(){
   if (!W.account){ wb.className='btn sm'; wb.textContent='지갑 연결'; }
   else if (!walletOnChain()){ wb.className='btn danger sm'; wb.textContent='네트워크 전환 필요'; }
   else { wb.className='btn ghost sm'; wb.textContent=`${short(W.account,4,4)} · ${fmtCoin(W.balance)}`; }
-  $('#foot-mode').textContent = isLive() ? `실제 ${SET.chainName} 메인넷 · ${SET.rpc.replace(/^https?:\/\//,'')}` : '시뮬레이션 네트워크 · 예시 데이터';
+  $('#foot-mode').textContent = isLive() ? `실제 ${SET.chainName} 메인넷 · ${SET.rpc.replace(/^https?:\/\//,'')}` : '시뮬레이션 네트워크 · 예시 데이터' + ` · 빌드 ${CONSOLE_BUILD}`;
 }
 function render(){
   const v=(location.hash||'').slice(1);
